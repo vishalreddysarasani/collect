@@ -16,15 +16,12 @@ package org.odk.collect.android.application;
 
 import android.app.Application;
 import android.content.Context;
-import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
 import android.util.Log;
@@ -36,11 +33,6 @@ import androidx.multidex.MultiDex;
 import com.crashlytics.android.Crashlytics;
 import com.evernote.android.job.JobManager;
 import com.evernote.android.job.JobManagerCreateException;
-import com.google.android.gms.analytics.GoogleAnalytics;
-import com.google.android.gms.analytics.HitBuilders;
-import com.google.android.gms.analytics.Tracker;
-import com.google.android.gms.common.GoogleApiAvailability;
-import com.google.android.gms.security.ProviderInstaller;
 import com.google.firebase.analytics.FirebaseAnalytics;
 import com.squareup.leakcanary.LeakCanary;
 import com.squareup.leakcanary.RefWatcher;
@@ -59,18 +51,22 @@ import org.odk.collect.android.logic.PropertyManager;
 import org.odk.collect.android.preferences.AdminSharedPreferences;
 import org.odk.collect.android.preferences.AutoSendPreferenceMigrator;
 import org.odk.collect.android.preferences.FormMetadataMigrator;
+import org.odk.collect.android.preferences.GeneralKeys;
 import org.odk.collect.android.preferences.GeneralSharedPreferences;
 import org.odk.collect.android.preferences.PrefMigrator;
+import org.odk.collect.android.storage.StoragePathProvider;
 import org.odk.collect.android.tasks.sms.SmsNotificationReceiver;
 import org.odk.collect.android.tasks.sms.SmsSentBroadcastReceiver;
 import org.odk.collect.android.utilities.FileUtils;
 import org.odk.collect.android.utilities.LocaleHelper;
 import org.odk.collect.android.utilities.NotificationUtils;
-import org.odk.collect.android.utilities.PRNGFixes;
+import org.odk.collect.utilities.UserAgentProvider;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.util.Locale;
+
+import javax.inject.Inject;
 
 import timber.log.Timber;
 
@@ -89,19 +85,8 @@ import static org.odk.collect.android.tasks.sms.SmsSender.SMS_SEND_ACTION;
  */
 public class Collect extends Application {
 
-    // Storage paths
-    public static final String ODK_ROOT = Environment.getExternalStorageDirectory()
-            + File.separator + "odk";
-    public static final String FORMS_PATH = ODK_ROOT + File.separator + "forms";
-    public static final String INSTANCES_PATH = ODK_ROOT + File.separator + "instances";
-    public static final String CACHE_PATH = ODK_ROOT + File.separator + ".cache";
-    public static final String METADATA_PATH = ODK_ROOT + File.separator + "metadata";
-    public static final String TMPFILE_PATH = CACHE_PATH + File.separator + "tmp.jpg";
-    public static final String TMPDRAWFILE_PATH = CACHE_PATH + File.separator + "tmpDraw.jpg";
     public static final String DEFAULT_FONTSIZE = "21";
     public static final int DEFAULT_FONTSIZE_INT = 21;
-    public static final String OFFLINE_LAYERS = ODK_ROOT + File.separator + "layers";
-    public static final String SETTINGS = ODK_ROOT + File.separator + "settings";
 
     public static final int CLICK_DEBOUNCE_MS = 1000;
 
@@ -113,9 +98,15 @@ public class Collect extends Application {
     @Nullable
     private FormController formController;
     private ExternalDataManager externalDataManager;
-    private Tracker tracker;
     private FirebaseAnalytics firebaseAnalytics;
     private AppDependencyComponent applicationComponent;
+
+    @Inject
+    UserAgentProvider userAgentProvider;
+
+    @Inject
+    public
+    CollectJobCreator collectJobCreator;
 
     public static Collect getInstance() {
         return singleton;
@@ -132,40 +123,6 @@ public class Collect extends Application {
     }
 
     /**
-     * Creates required directories on the SDCard (or other external storage)
-     *
-     * @throws RuntimeException if there is no SDCard or the directory exists as a non directory
-     */
-    public static void createODKDirs() throws RuntimeException {
-        String cardstatus = Environment.getExternalStorageState();
-        if (!cardstatus.equals(Environment.MEDIA_MOUNTED)) {
-            throw new RuntimeException(
-                    Collect.getInstance().getString(R.string.sdcard_unmounted, cardstatus));
-        }
-
-        String[] dirs = {
-                ODK_ROOT, FORMS_PATH, INSTANCES_PATH, CACHE_PATH, METADATA_PATH, OFFLINE_LAYERS
-        };
-
-        for (String dirName : dirs) {
-            File dir = new File(dirName);
-            if (!dir.exists()) {
-                if (!dir.mkdirs()) {
-                    String message = getInstance().getString(R.string.cannot_create_directory, dirName);
-                    Timber.w(message);
-                    throw new RuntimeException(message);
-                }
-            } else {
-                if (!dir.isDirectory()) {
-                    String message = getInstance().getString(R.string.not_a_directory, dirName);
-                    Timber.w(message);
-                    throw new RuntimeException(message);
-                }
-            }
-        }
-    }
-
-    /**
      * Predicate that tests whether a directory path might refer to an
      * ODK Tables instance data directory (e.g., for media attachments).
      */
@@ -175,8 +132,9 @@ public class Collect extends Application {
          * could be in use by ODK Tables.
          */
         String dirPath = directory.getAbsolutePath();
-        if (dirPath.startsWith(Collect.ODK_ROOT)) {
-            dirPath = dirPath.substring(Collect.ODK_ROOT.length());
+        StoragePathProvider storagePathProvider = new StoragePathProvider();
+        if (dirPath.startsWith(storagePathProvider.getStorageRootDirPath())) {
+            dirPath = dirPath.substring(storagePathProvider.getStorageRootDirPath().length());
             String[] parts = dirPath.split(File.separatorChar == '\\' ? "\\\\" : File.separator);
             // [appName, instances, tableId, instanceId ]
             if (parts.length == 4 && parts[1].equals("instances")) {
@@ -215,12 +173,6 @@ public class Collect extends Application {
      *
      * This deviates from the recommended format as described in https://github.com/opendatakit/collect/issues/3253.
      */
-    public String getUserAgentString() {
-        return String.format("%s %s/%s",
-                System.getProperty("http.agent"),
-                BuildConfig.APPLICATION_ID,
-                BuildConfig.VERSION_NAME);
-    }
 
     public boolean isNetworkAvailable() {
         ConnectivityManager manager = (ConnectivityManager) getInstance()
@@ -245,7 +197,6 @@ public class Collect extends Application {
         singleton = this;
         firebaseAnalytics = FirebaseAnalytics.getInstance(this);
 
-        installTls12();
         setupDagger();
 
         NotificationUtils.createNotificationChannel(singleton);
@@ -256,7 +207,7 @@ public class Collect extends Application {
         try {
             JobManager
                     .create(this)
-                    .addJobCreator(new CollectJobCreator());
+                    .addJobCreator(collectJobCreator);
         } catch (JobManagerCreateException e) {
             Timber.e(e);
         }
@@ -268,7 +219,6 @@ public class Collect extends Application {
 
         reloadSharedPreferences();
 
-        PRNGFixes.apply();
         AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
         JodaTimeAndroid.init(this);
 
@@ -283,12 +233,23 @@ public class Collect extends Application {
             Timber.plant(new Timber.DebugTree());
         }
 
+        setupRemoteAnalytics();
         setupLeakCanary();
         setupOSMDroid();
+
+        // Force inclusion of scoped storage strings so they can be translated
+        Timber.i("%s %s", getString(R.string.scoped_storage_banner_text),
+                                   getString(R.string.scoped_storage_learn_more));
+    }
+
+    private void setupRemoteAnalytics() {
+        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences(this);
+        boolean isAnalyticsEnabled = settings.getBoolean(GeneralKeys.KEY_ANALYTICS, true);
+        setAnalyticsCollectionEnabled(isAnalyticsEnabled);
     }
 
     protected void setupOSMDroid() {
-        org.osmdroid.config.Configuration.getInstance().setUserAgentValue(getUserAgentString());
+        org.osmdroid.config.Configuration.getInstance().setUserAgentValue(userAgentProvider.getUserAgent());
     }
 
     private void setupDagger() {
@@ -297,23 +258,6 @@ public class Collect extends Application {
                 .build();
 
         applicationComponent.inject(this);
-    }
-
-    private void installTls12() {
-        if (Build.VERSION.SDK_INT <= 20) {
-            ProviderInstaller.installIfNeededAsync(getApplicationContext(), new ProviderInstaller.ProviderInstallListener() {
-                @Override
-                public void onProviderInstalled() {
-                }
-
-                @Override
-                public void onProviderInstallFailed(int i, Intent intent) {
-                    GoogleApiAvailability
-                            .getInstance()
-                            .showErrorNotification(getApplicationContext(), i);
-                }
-            });
-        }
     }
 
     protected RefWatcher setupLeakCanary() {
@@ -335,30 +279,7 @@ public class Collect extends Application {
         }
     }
 
-    /**
-     * Gets the default {@link Tracker} for this {@link Application}.
-     *
-     * @return tracker
-     */
-    public synchronized Tracker getDefaultTracker() {
-        if (tracker == null) {
-            GoogleAnalytics analytics = GoogleAnalytics.getInstance(this);
-            tracker = analytics.newTracker(R.xml.global_tracker);
-        }
-        return tracker;
-    }
-
     public void logRemoteAnalytics(String event, String action, String label) {
-        // Google Analytics
-        Collect.getInstance()
-                .getDefaultTracker()
-                .send(new HitBuilders.EventBuilder()
-                        .setCategory(event)
-                        .setAction(action)
-                        .setLabel(label)
-                        .build());
-
-        // Firebase Analytics
         Bundle bundle = new Bundle();
         bundle.putString("action", action);
         bundle.putString("label", label);
@@ -442,7 +363,6 @@ public class Collect extends Application {
 
         return FileUtils.getMd5Hash(new ByteArrayInputStream(formIdentifier.getBytes()));
     }
-
 
     /**
      * Gets a unique, privacy-preserving identifier for a form based on its id and version.

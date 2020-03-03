@@ -23,7 +23,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import androidx.annotation.Nullable;
 import androidx.core.content.FileProvider;
-import androidx.appcompat.widget.Toolbar;
+
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -42,12 +42,12 @@ import com.google.zxing.integration.android.IntentResult;
 
 import org.odk.collect.android.BuildConfig;
 import org.odk.collect.android.R;
+import org.odk.collect.android.activities.CollectAbstractActivity;
 import org.odk.collect.android.activities.MainMenuActivity;
 import org.odk.collect.android.activities.ScannerWithFlashlightActivity;
 import org.odk.collect.android.application.Collect;
 import org.odk.collect.android.listeners.ActionListener;
 import org.odk.collect.android.listeners.PermissionListener;
-import org.odk.collect.android.preferences.AdminPreferencesActivity;
 import org.odk.collect.android.preferences.AdminSharedPreferences;
 import org.odk.collect.android.preferences.GeneralSharedPreferences;
 import org.odk.collect.android.preferences.PreferenceSaver;
@@ -78,14 +78,13 @@ import static android.view.View.GONE;
 import static android.view.View.VISIBLE;
 import static org.odk.collect.android.preferences.AdminKeys.KEY_ADMIN_PW;
 import static org.odk.collect.android.preferences.GeneralKeys.KEY_PASSWORD;
-import static org.odk.collect.android.utilities.QRCodeUtils.QR_CODE_FILEPATH;
 
 public class ShowQRCodeFragment extends Fragment {
 
     private static final int SELECT_PHOTO = 111;
 
     private final CompositeDisposable compositeDisposable = new CompositeDisposable();
-    private final boolean[] checkedItems = new boolean[]{true, true};
+    private final boolean[] checkedItems = {true, true};
 
     @BindView(R.id.ivQRcode)
     ImageView ivQRCode;
@@ -101,10 +100,8 @@ public class ShowQRCodeFragment extends Fragment {
     @Override
     public View onCreateView(LayoutInflater inflater, @Nullable ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.show_qrcode_fragment, container, false);
+        ((CollectAbstractActivity) getActivity()).initToolbar(getString(R.string.import_export_settings));
         ButterKnife.bind(this, view);
-        Toolbar toolbar = view.findViewById(R.id.toolbar);
-        toolbar.setTitle(getString(R.string.import_export_settings));
-        ((AdminPreferencesActivity) getActivity()).setSupportActionBar(toolbar);
         setHasOptionsMenu(true);
         setRetainInstance(true);
         generateCode();
@@ -154,7 +151,7 @@ public class ShowQRCodeFragment extends Fragment {
         shareIntent.setAction(Intent.ACTION_SEND);
         shareIntent.setType("image/*");
         Uri uri =
-                FileProvider.getUriForFile(getActivity(), BuildConfig.APPLICATION_ID + ".provider", new File(QR_CODE_FILEPATH));
+                FileProvider.getUriForFile(getActivity(), BuildConfig.APPLICATION_ID + ".provider", new File(QRCodeUtils.getQrCodeFilepath()));
         FileUtils.grantFileReadPermissions(shareIntent, uri, getActivity());
         shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
     }
@@ -167,7 +164,7 @@ public class ShowQRCodeFragment extends Fragment {
                 IntentIntegrator.forFragment(ShowQRCodeFragment.this)
                         .setCaptureActivity(ScannerWithFlashlightActivity.class)
                         .setBeepEnabled(true)
-                        .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE_TYPES)
+                        .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
                         .setOrientationLocked(false)
                         .setPrompt(getString(R.string.qrcode_scanner_prompt))
                         .initiateScan();
@@ -194,7 +191,7 @@ public class ShowQRCodeFragment extends Fragment {
     @OnClick(R.id.tvPasswordWarning)
     void passwordWarningClicked() {
         if (dialog == null) {
-            final String[] items = new String[]{
+            final String[] items = {
                     getString(R.string.admin_password),
                     getString(R.string.server_password)};
 
@@ -225,8 +222,9 @@ public class ShowQRCodeFragment extends Fragment {
             } else {
                 try {
                     applySettings(CompressionUtils.decompress(result.getContents()));
-                } catch (IOException | DataFormatException e) {
+                } catch (IOException | DataFormatException | IllegalArgumentException e) {
                     Timber.e(e);
+                    ToastUtils.showShortToast(getString(R.string.invalid_qrcode));
                 }
                 return;
             }
@@ -256,7 +254,7 @@ public class ShowQRCodeFragment extends Fragment {
                 } catch (FormatException | NotFoundException | ChecksumException e) {
                     Timber.i(e);
                     ToastUtils.showLongToast(R.string.qr_code_not_found);
-                } catch (DataFormatException | IOException | OutOfMemoryError e) {
+                } catch (DataFormatException | IOException | OutOfMemoryError | IllegalArgumentException e) {
                     Timber.e(e);
                     ToastUtils.showShortToast(getString(R.string.invalid_qrcode));
                 }
@@ -301,25 +299,6 @@ public class ShowQRCodeFragment extends Fragment {
             case R.id.menu_item_share:
                 if (shareIntent != null) {
                     startActivity(Intent.createChooser(shareIntent, getString(R.string.share_qrcode)));
-                }
-                return true;
-            case R.id.menu_save_preferences:
-                File writeDir = new File(Collect.SETTINGS);
-                if (!writeDir.exists()) {
-                    if (!writeDir.mkdirs()) {
-                        ToastUtils.showShortToast("Error creating directory "
-                                + writeDir.getAbsolutePath());
-                        return false;
-                    }
-                }
-
-                File dst = new File(writeDir.getAbsolutePath() + "/collect.settings");
-                boolean success = AdminPreferencesActivity.saveSharedPreferencesToFile(dst, getActivity());
-                if (success) {
-                    ToastUtils.showLongToast("Settings successfully written to "
-                            + dst.getAbsolutePath());
-                } else {
-                    ToastUtils.showLongToast("Error writing settings to " + dst.getAbsolutePath());
                 }
                 return true;
         }

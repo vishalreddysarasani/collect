@@ -33,6 +33,7 @@ import com.google.android.gms.maps.model.Circle;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.LatLngBounds;
+import com.google.android.gms.maps.model.MapStyleOptions;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.Polyline;
@@ -43,6 +44,7 @@ import com.google.android.gms.maps.model.TileOverlayOptions;
 import org.odk.collect.android.R;
 import org.odk.collect.android.location.client.LocationClient;
 import org.odk.collect.android.location.client.LocationClients;
+import org.odk.collect.android.storage.StoragePathProvider;
 import org.odk.collect.android.utilities.IconUtils;
 import org.odk.collect.android.utilities.ToastUtils;
 
@@ -62,11 +64,11 @@ import timber.log.Timber;
 public class GoogleMapFragment extends SupportMapFragment implements
     MapFragment, LocationListener, LocationClient.LocationClientListener,
     GoogleMap.OnMapClickListener, GoogleMap.OnMapLongClickListener,
-    GoogleMap.OnMarkerDragListener, GoogleMap.OnMarkerClickListener {
+    GoogleMap.OnMarkerClickListener, GoogleMap.OnMarkerDragListener,
+    GoogleMap.OnPolylineClickListener {
 
     // Bundle keys understood by applyConfig().
     static final String KEY_MAP_TYPE = "MAP_TYPE";
-    static final String KEY_REFERENCE_LAYER = "REFERENCE_LAYER";
 
     private GoogleMap map;
     private Marker locationCrosshairs;
@@ -75,6 +77,7 @@ public class GoogleMapFragment extends SupportMapFragment implements
     private PointListener clickListener;
     private PointListener longPressListener;
     private PointListener gpsLocationListener;
+    private FeatureListener featureClickListener;
     private FeatureListener dragEndListener;
 
     private LocationClient locationClient;
@@ -116,6 +119,7 @@ public class GoogleMapFragment extends SupportMapFragment implements
             map.setOnMapClickListener(this);
             map.setOnMapLongClickListener(this);
             map.setOnMarkerClickListener(this);
+            map.setOnPolylineClickListener(this);
             map.setOnMarkerDragListener(this);
             map.getUiSettings().setCompassEnabled(true);
             // Don't show the blue dot on the map; we'll draw crosshairs instead.
@@ -154,7 +158,7 @@ public class GoogleMapFragment extends SupportMapFragment implements
 
     @Override public void applyConfig(Bundle config) {
         mapType = config.getInt(KEY_MAP_TYPE, GoogleMap.MAP_TYPE_NORMAL);
-        String path = config.getString(KEY_REFERENCE_LAYER);
+        String path = new StoragePathProvider().getAbsoluteOfflineMapLayerPath(config.getString(KEY_REFERENCE_LAYER));
         referenceLayerFile = path != null ? new File(path) : null;
         if (map != null) {
             map.setMapType(mapType);
@@ -230,6 +234,13 @@ public class GoogleMapFragment extends SupportMapFragment implements
         return featureId;
     }
 
+    @Override public void setMarkerIcon(int featureId, int drawableId) {
+        MapFeature feature = features.get(featureId);
+        if (feature instanceof MarkerFeature) {
+            ((MarkerFeature) feature).setIcon(drawableId);
+        }
+    }
+
     @Override public @Nullable MapPoint getMarkerPoint(int featureId) {
         MapFeature feature = features.get(featureId);
         return feature instanceof MarkerFeature ? ((MarkerFeature) feature).getPoint() : null;
@@ -285,6 +296,10 @@ public class GoogleMapFragment extends SupportMapFragment implements
 
     @Override public void setLongPressListener(@Nullable PointListener listener) {
         longPressListener = listener;
+    }
+
+    @Override public void setFeatureClickListener(@Nullable FeatureListener listener) {
+        featureClickListener = listener;
     }
 
     @Override public void setDragEndListener(@Nullable FeatureListener listener) {
@@ -348,8 +363,18 @@ public class GoogleMapFragment extends SupportMapFragment implements
     }
 
     @Override public boolean onMarkerClick(Marker marker) {
-        onMapClick(marker.getPosition());
-        return true;
+        if (featureClickListener != null) { // FormMapActivity
+            featureClickListener.onFeature(findFeature(marker));
+        } else { // GeoWidget
+            onMapClick(marker.getPosition());
+        }
+        return true;  // consume the event (no default zoom and popup behaviour)
+    }
+
+    @Override public void onPolylineClick(Polyline polyline) {
+        if (featureClickListener != null) {
+            featureClickListener.onFeature(findFeature(polyline));
+        }
     }
 
     @Override public void onMarkerDragStart(Marker marker) {
@@ -438,7 +463,15 @@ public class GoogleMapFragment extends SupportMapFragment implements
             referenceOverlay = this.map.addTileOverlay(new TileOverlayOptions().tileProvider(
                 new GoogleMapsMapBoxOfflineTileProvider(referenceLayerFile)
             ));
+            setLabelsVisibility("off");
+        } else {
+            setLabelsVisibility("on");
         }
+    }
+
+    private void setLabelsVisibility(String state) {
+        String style = String.format(" [ { featureType: all, elementType: labels, stylers: [ { visibility: %s } ] } ]", state);
+        map.setMapStyle(new MapStyleOptions(style));
     }
 
     private LatLngBounds expandBounds(LatLngBounds bounds, double factor) {
@@ -522,6 +555,16 @@ public class GoogleMapFragment extends SupportMapFragment implements
         return -1;  // not found
     }
 
+    /** Finds the feature to which the given polyline belongs. */
+    private int findFeature(Polyline polyline) {
+        for (int featureId : features.keySet()) {
+            if (features.get(featureId).ownsPolyline(polyline)) {
+                return featureId;
+            }
+        }
+        return -1;  // not found
+    }
+
     private void updateFeature(int featureId) {
         MapFeature feature = features.get(featureId);
         if (feature != null) {
@@ -573,6 +616,9 @@ public class GoogleMapFragment extends SupportMapFragment implements
         /** Returns true if the given marker belongs to this feature. */
         boolean ownsMarker(Marker marker);
 
+        /** Returns true if the given polyline belongs to this feature. */
+        boolean ownsPolyline(Polyline polyline);
+
         /** Updates the feature's geometry after any UI handles have moved. */
         void update();
 
@@ -584,7 +630,11 @@ public class GoogleMapFragment extends SupportMapFragment implements
         private Marker marker;
 
         MarkerFeature(GoogleMap map, MapPoint point, boolean draggable) {
-            this.marker = createMarker(map, point, draggable);
+            marker = createMarker(map, point, draggable);
+        }
+
+        public void setIcon(int drawableId) {
+            marker.setIcon(getBitmapDescriptor(drawableId));
         }
 
         public MapPoint getPoint() {
@@ -593,6 +643,10 @@ public class GoogleMapFragment extends SupportMapFragment implements
 
         public boolean ownsMarker(Marker givenMarker) {
             return marker.equals(givenMarker);
+        }
+
+        public boolean ownsPolyline(Polyline givenPolyline) {
+            return false;
         }
 
         public void update() { }
@@ -628,6 +682,10 @@ public class GoogleMapFragment extends SupportMapFragment implements
             return markers.contains(givenMarker);
         }
 
+        public boolean ownsPolyline(Polyline givenPolyline) {
+            return polyline.equals(givenPolyline);
+        }
+
         public void update() {
             List<LatLng> latLngs = new ArrayList<>();
             for (Marker marker : markers) {
@@ -644,6 +702,7 @@ public class GoogleMapFragment extends SupportMapFragment implements
                     .zIndex(1)
                     .width(STROKE_WIDTH)
                     .addAll(latLngs)
+                    .clickable(true)
                 );
             } else {
                 polyline.setPoints(latLngs);

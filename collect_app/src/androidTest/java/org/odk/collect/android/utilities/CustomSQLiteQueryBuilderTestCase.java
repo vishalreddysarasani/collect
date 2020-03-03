@@ -23,7 +23,8 @@ import androidx.test.runner.AndroidJUnit4;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.odk.collect.android.application.Collect;
+import org.odk.collect.android.storage.StoragePathProvider;
+import org.odk.collect.android.storage.StorageSubdirectory;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
@@ -32,11 +33,11 @@ import static junit.framework.Assert.assertTrue;
 @RunWith(AndroidJUnit4.class)
 public class CustomSQLiteQueryBuilderTestCase {
 
-    private static final String DATABASE_PATH = Collect.METADATA_PATH + "/test.db";
+    private static final String DATABASE_PATH = new StoragePathProvider().getDirPath(StorageSubdirectory.METADATA) + "/test.db";
     private static final String TEST_TABLE_NAME = "testTable";
     private static final String TEST_TABLE_NAME_2 = "testTable2";
 
-    private final String[] tableColumns = new String[] {"_id", "col1", "col2", "col3"};
+    private final String[] tableColumns = {"_id", "col1", "col2", "col3"};
 
     private SQLiteDatabase sqLiteDatabase;
 

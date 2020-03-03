@@ -3,19 +3,28 @@ package org.odk.collect.android.injection.config;
 import android.app.Application;
 import android.telephony.SmsManager;
 
+import org.javarosa.core.reference.ReferenceManager;
 import org.odk.collect.android.activities.FormDownloadList;
 import org.odk.collect.android.activities.FormEntryActivity;
 import org.odk.collect.android.activities.GoogleDriveActivity;
 import org.odk.collect.android.activities.GoogleSheetsUploaderActivity;
 import org.odk.collect.android.activities.InstanceUploaderListActivity;
+import org.odk.collect.android.activities.MainMenuActivity;
 import org.odk.collect.android.adapters.InstanceUploaderAdapter;
+import org.odk.collect.android.analytics.Analytics;
 import org.odk.collect.android.application.Collect;
 import org.odk.collect.android.events.RxEventBus;
+import org.odk.collect.android.formentry.ODKView;
 import org.odk.collect.android.fragments.DataManagerList;
-import org.odk.collect.android.http.CollectServerClient;
-import org.odk.collect.android.http.openrosa.OpenRosaHttpInterface;
 import org.odk.collect.android.logic.PropertyManager;
+import org.odk.collect.android.openrosa.OpenRosaAPIClient;
+import org.odk.collect.android.openrosa.OpenRosaHttpInterface;
+import org.odk.collect.android.preferences.AdminSharedPreferences;
+import org.odk.collect.android.preferences.FormMetadataFragment;
+import org.odk.collect.android.preferences.GeneralSharedPreferences;
 import org.odk.collect.android.preferences.ServerPreferencesFragment;
+import org.odk.collect.android.storage.migration.StorageMigrationDialog;
+import org.odk.collect.android.storage.migration.StorageMigrationService;
 import org.odk.collect.android.tasks.InstanceServerUploaderTask;
 import org.odk.collect.android.tasks.ServerPollingJob;
 import org.odk.collect.android.tasks.sms.SmsNotificationReceiver;
@@ -23,9 +32,11 @@ import org.odk.collect.android.tasks.sms.SmsSender;
 import org.odk.collect.android.tasks.sms.SmsSentBroadcastReceiver;
 import org.odk.collect.android.tasks.sms.SmsService;
 import org.odk.collect.android.tasks.sms.contracts.SmsSubmissionManagerContract;
+import org.odk.collect.android.upload.AutoSendWorker;
 import org.odk.collect.android.utilities.AuthDialogUtility;
-import org.odk.collect.android.utilities.DownloadFormListUtils;
 import org.odk.collect.android.utilities.FormDownloader;
+import org.odk.collect.android.widgets.ExStringWidget;
+import org.odk.collect.android.widgets.QuestionWidget;
 
 import javax.inject.Singleton;
 
@@ -88,7 +99,7 @@ public interface AppDependencyComponent {
 
     void inject(InstanceServerUploaderTask uploader);
 
-    void inject(CollectServerClient collectClient);
+    void inject(OpenRosaAPIClient collectClient);
 
     void inject(ServerPreferencesFragment serverPreferencesFragment);
 
@@ -106,6 +117,22 @@ public interface AppDependencyComponent {
 
     void inject(GoogleSheetsUploaderActivity googleSheetsUploaderActivity);
 
+    void inject(QuestionWidget questionWidget);
+
+    void inject(ExStringWidget exStringWidget);
+
+    void inject(ODKView odkView);
+
+    void inject(FormMetadataFragment formMetadataFragment);
+
+    void inject(MainMenuActivity mainMenuActivity);
+
+    void inject(StorageMigrationService storageMigrationService);
+
+    void inject(AutoSendWorker autoSendWorker);
+
+    void inject(StorageMigrationDialog storageMigrationDialog);
+
     SmsManager smsManager();
 
     SmsSubmissionManagerContract smsSubmissionManagerContract();
@@ -114,5 +141,11 @@ public interface AppDependencyComponent {
 
     OpenRosaHttpInterface openRosaHttpInterface();
 
-    DownloadFormListUtils downloadFormListUtils();
+    ReferenceManager referenceManager();
+
+    Analytics analytics();
+
+    GeneralSharedPreferences generalSharedPreferences();
+
+    AdminSharedPreferences adminSharedPreferences();
 }
